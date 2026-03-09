@@ -155,6 +155,33 @@ const seed = () => {
   const insertSitemap = db.prepare('INSERT OR IGNORE INTO sitemap (title, url, priority) VALUES (?, ?, ?)');
   defaultSitemap.forEach(s => insertSitemap.run(s.title, s.url, s.priority));
 
+  // Seed dummy articles
+  const articlesCount = db.prepare('SELECT COUNT(*) as count FROM articles').get() as { count: number };
+  if (articlesCount.count === 0) {
+    const dummyArticles = [
+      {
+        title: 'Tren Bisnis Coffee Shop di Yogyakarta 2026',
+        slug: 'tren-bisnis-coffee-shop-jogja-2026',
+        content: '<p>Bisnis coffee shop di Yogyakarta terus berkembang pesat. Tahun 2026 diprediksi akan menjadi tahun inovasi bagi para pelaku usaha F&B...</p>',
+        summary: 'Analisis mendalam mengenai perkembangan industri kopi di kota pelajar.',
+        image_url: 'https://images.unsplash.com/photo-1501339847302-ac426a4a7cbb?auto=format&fit=crop&q=80&w=800',
+        category_id: 2
+      },
+      {
+        title: '5 Rekomendasi Gudeg Legendaris yang Wajib Dicoba',
+        slug: '5-rekomendasi-gudeg-legendaris-jogja',
+        content: '<p>Gudeg adalah ikon kuliner Yogyakarta. Berikut adalah 5 tempat gudeg yang sudah melegenda selama puluhan tahun...</p>',
+        summary: 'Daftar gudeg terbaik untuk pecinta kuliner tradisional.',
+        image_url: 'https://images.unsplash.com/photo-1589476993333-f55b84301219?auto=format&fit=crop&q=80&w=800',
+        category_id: 3
+      }
+    ];
+
+    const insertArticle = db.prepare('INSERT INTO articles (title, slug, content, summary, image_url, category_id) VALUES (?, ?, ?, ?, ?, ?)');
+    dummyArticles.forEach(art => insertArticle.run(art.title, art.slug, art.content, art.summary, art.image_url, art.category_id));
+    console.log('Dummy articles seeded successfully');
+  }
+
   // Seed dummy ads
   const adsCount = db.prepare('SELECT COUNT(*) as count FROM ads').get() as { count: number };
   if (adsCount.count === 0) {
