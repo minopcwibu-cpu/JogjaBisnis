@@ -5,7 +5,13 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const db = new Database(path.join(__dirname, 'database.sqlite'));
+// In Vercel, we might need to use /tmp for a writable sqlite file, 
+// but for reading dummy data, we'll try to locate it relative to the function
+const dbPath = process.env.VERCEL 
+  ? path.join('/tmp', 'database.sqlite')
+  : path.join(__dirname, 'database.sqlite');
+
+const db = new Database(dbPath);
 
 // Enable foreign keys
 db.pragma('foreign_keys = ON');
