@@ -28,54 +28,82 @@ import {
   Palette,
   Megaphone,
   Eye,
-  Layout
+  Layout,
+  LogIn
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { 
+  collection, 
+  onSnapshot, 
+  addDoc, 
+  updateDoc, 
+  deleteDoc, 
+  doc, 
+  query, 
+  where, 
+  getDocs, 
+  setDoc,
+  orderBy,
+  limit as firestoreLimit,
+  Timestamp,
+  getDoc
+} from 'firebase/firestore';
+import { 
+  signInWithPopup, 
+  GoogleAuthProvider, 
+  onAuthStateChanged, 
+  signOut,
+  User as FirebaseUser
+} from 'firebase/auth';
+import { db, auth } from './firebase';
 
 // --- TYPES ---
 interface Article {
-  id: number;
+  id: string;
   title: string;
   slug: string;
   content: string;
   summary: string;
   image_url: string;
-  category_name: string;
-  category_slug: string;
+  category_id: string;
+  category_name?: string;
+  category_slug?: string;
   author: string;
-  created_at: string;
+  created_at: any;
+  status: 'published' | 'draft';
 }
 
 interface Category {
-  id: number;
+  id: string;
   name: string;
   slug: string;
+  description?: string;
 }
 
 interface DirectoryItem {
-  id: number;
+  id: string;
   name: string;
   slug: string;
   address: string;
   rating: number;
   image_url: string;
-  category_name: string;
-  category_id: number;
+  category_id: string;
+  category_name?: string;
   description: string;
   website: string;
   instagram: string;
 }
 
 interface SitemapItem {
-  id: number;
+  id: string;
   title: string;
   url: string;
   priority: number;
-  last_mod: string;
+  last_mod: any;
 }
 
 interface ApiConfig {
-  id: number;
+  id: string;
   name: string;
   endpoint: string;
   api_key: string;
@@ -94,19 +122,19 @@ interface SiteSettings {
 }
 
 interface Ad {
-  id: number;
+  id: string;
   name: string;
   type: 'image' | 'html';
   content: string;
   target_url: string;
   position: string;
-  is_active: number;
+  is_active: boolean;
 }
 
 // --- COMPONENTS ---
 
 const AdPlacement = ({ ads, position }: { ads: Ad[], position: string }) => {
-  const ad = ads.find(a => a.position === position && a.is_active === 1);
+  const ad = ads.find(a => a.position === position && a.is_active);
   if (!ad) return null;
 
   return (
@@ -419,12 +447,16 @@ const ArticlePage = ({ slug, ads }: { slug: string, ads: Ad[] }) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch(`/api/articles/${slug}`)
-      .then(res => res.json())
-      .then(data => {
-        setArticle(data);
-        setLoading(false);
-      });
+    const q = query(collection(db, 'articles'), where('slug', '==', slug), firestoreLimit(1));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      if (!snapshot.empty) {
+        setArticle({ id: snapshot.docs[0].id, ...snapshot.docs[0].data() } as Article);
+      } else {
+        setArticle(null);
+      }
+      setLoading(false);
+    });
+    return () => unsubscribe();
   }, [slug]);
 
   if (loading) return <div className="max-w-3xl mx-auto py-20 text-center">Loading...</div>;
@@ -502,12 +534,11 @@ const DirectoryPage = ({ ads }: { ads: Ad[] }) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch('/api/directory')
-      .then(res => res.json())
-      .then(data => {
-        setItems(data);
-        setLoading(false);
-      });
+    const unsubscribe = onSnapshot(collection(db, 'directory'), (snapshot) => {
+      setItems(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as DirectoryItem)));
+      setLoading(false);
+    });
+    return () => unsubscribe();
   }, []);
 
   return (
@@ -559,22 +590,35 @@ const DirectoryPage = ({ ads }: { ads: Ad[] }) => {
 };
 
 const AdminLogin = ({ onLogin }: { onLogin: (user: any) => void }) => {
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const res = await fetch('/api/admin/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password })
-    });
-    const data = await res.json();
-    if (data.success) {
-      onLogin(data.user);
-    } else {
-      setError(data.error);
+  const handleGoogleLogin = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const provider = new GoogleAuthProvider();
+      const result = await signInWithPopup(auth, provider);
+      const user = result.user;
+      
+      // Check if user is admin in Firestore
+      const userDoc = await getDoc(doc(db, 'users', user.uid));
+      if (userDoc.exists() && (userDoc.data().role === 'admin' || userDoc.data().role === 'editor')) {
+        onLogin({ ...userDoc.data(), uid: user.uid });
+      } else if (user.email === "minopc.wibu@gmail.com") {
+        // Auto-bootstrap first admin
+        const adminProfile = { uid: user.uid, email: user.email, role: 'admin' };
+        await setDoc(doc(db, 'users', user.uid), adminProfile);
+        onLogin(adminProfile);
+      } else {
+        await signOut(auth);
+        setError('Akses ditolak. Anda bukan administrator.');
+      }
+    } catch (err: any) {
+      console.error(err);
+      setError('Gagal masuk dengan Google. Silakan coba lagi.');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -592,31 +636,27 @@ const AdminLogin = ({ onLogin }: { onLogin: (user: any) => void }) => {
         
         {error && <div className="bg-red-50 text-red-600 p-3 rounded-lg text-sm mb-6">{error}</div>}
         
-        <form onSubmit={handleSubmit} className="space-y-6">
-          <div>
-            <label className="block text-xs font-bold uppercase tracking-widest text-gray-400 mb-2">Username</label>
-            <input 
-              type="text" 
-              value={username}
-              onChange={e => setUsername(e.target.value)}
-              className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all"
-              placeholder="admin"
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-bold uppercase tracking-widest text-gray-400 mb-2">Password</label>
-            <input 
-              type="password" 
-              value={password}
-              onChange={e => setPassword(e.target.value)}
-              className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all"
-              placeholder="••••••••"
-            />
-          </div>
-          <button type="submit" className="w-full bg-black text-white font-bold py-4 rounded-xl hover:bg-emerald-600 transition-all shadow-lg shadow-black/10">
-            Masuk ke Dashboard
+        <div className="space-y-6">
+          <button 
+            onClick={handleGoogleLogin}
+            disabled={loading}
+            className="w-full flex items-center justify-center space-x-3 bg-white border-2 border-gray-100 text-gray-700 font-bold py-4 rounded-xl hover:bg-gray-50 transition-all shadow-sm disabled:opacity-50"
+          >
+            <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" className="w-5 h-5" />
+            <span>{loading ? 'Memproses...' : 'Masuk dengan Google'}</span>
           </button>
-        </form>
+          
+          <div className="relative">
+            <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-gray-100"></div></div>
+            <div className="relative flex justify-center text-[10px] uppercase font-bold tracking-widest text-gray-400">
+              <span className="bg-white px-4">Khusus Administrator</span>
+            </div>
+          </div>
+          
+          <p className="text-center text-[10px] text-gray-400 leading-relaxed">
+            Gunakan akun Google yang terdaftar sebagai admin untuk mengakses dashboard ini.
+          </p>
+        </div>
       </motion.div>
     </div>
   );
@@ -636,66 +676,92 @@ const AdminDashboard = ({ user, onLogout }: { user: any, onLogout: () => void })
   const [passwordData, setPasswordData] = useState({ current: '', new: '', confirm: '' });
   const [message, setMessage] = useState({ text: '', type: '' });
 
-  const fetchData = async () => {
-    const [artRes, dirRes, catRes, siteRes, apiRes, setRes, adsRes] = await Promise.all([
-      fetch('/api/articles?limit=100'),
-      fetch('/api/directory'),
-      fetch('/api/categories'),
-      fetch('/api/sitemap'),
-      fetch('/api/admin/api-configs'),
-      fetch('/api/settings'),
-      fetch('/api/ads')
-    ]);
-    setArticles(await artRes.json());
-    setDirectory(await dirRes.json());
-    setCategories(await catRes.json());
-    setSitemap(await siteRes.json());
-    setApiConfigs(await apiRes.json());
-    setSettings(await setRes.json());
-    setAds(await adsRes.json());
+  const fetchData = () => {
+    const unsubArticles = onSnapshot(collection(db, 'articles'), (snapshot) => {
+      setArticles(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Article)));
+    });
+    const unsubDirectory = onSnapshot(collection(db, 'directory'), (snapshot) => {
+      setDirectory(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as DirectoryItem)));
+    });
+    const unsubCategories = onSnapshot(collection(db, 'categories'), (snapshot) => {
+      setCategories(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Category)));
+    });
+    const unsubSitemap = onSnapshot(collection(db, 'sitemap'), (snapshot) => {
+      setSitemap(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as SitemapItem)));
+    });
+    const unsubApi = onSnapshot(collection(db, 'api_configs'), (snapshot) => {
+      setApiConfigs(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ApiConfig)));
+    });
+    const unsubAds = onSnapshot(collection(db, 'ads'), (snapshot) => {
+      setAds(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Ad)));
+    });
+    const unsubSettings = onSnapshot(collection(db, 'settings'), (snapshot) => {
+      const s: any = {};
+      snapshot.docs.forEach(doc => {
+        s[doc.id] = doc.data().value;
+      });
+      setSettings(s as SiteSettings);
+    });
+
+    return () => {
+      unsubArticles();
+      unsubDirectory();
+      unsubCategories();
+      unsubSitemap();
+      unsubApi();
+      unsubAds();
+      unsubSettings();
+    };
   };
 
   useEffect(() => {
-    fetchData();
+    const unsub = fetchData();
+    return unsub;
   }, []);
 
-  const handleDelete = async (type: string, id: number) => {
+  const handleDelete = async (type: string, id: string) => {
     if (!confirm('Yakin ingin menghapus?')) return;
-    const endpoint = type === 'ads' ? `/api/ads/${id}` : `/api/admin/${type}/${id}`;
-    const res = await fetch(endpoint, { method: 'DELETE' });
-    if (res.ok) fetchData();
+    try {
+      const collectionName = type === 'api-configs' ? 'api_configs' : type;
+      await deleteDoc(doc(db, collectionName, id));
+      showMsg('Data berhasil dihapus', 'success');
+    } catch (err) {
+      console.error(err);
+      showMsg('Gagal menghapus data', 'error');
+    }
   };
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     const formData = new FormData(e.target as HTMLFormElement);
-    const data = Object.fromEntries(formData.entries());
+    const data: any = Object.fromEntries(formData.entries());
     
     // Handle checkbox for ads
     if (activeTab === 'ads') {
-      data.is_active = formData.get('is_active') === 'on' ? '1' : '0';
+      data.is_active = formData.get('is_active') === 'on';
     }
 
-    let endpoint = '';
-    let method = editingItem?.id ? 'PUT' : 'POST';
+    try {
+      let collectionName = activeTab;
+      if (activeTab === 'api') collectionName = 'api_configs';
+      
+      const payload: any = { ...data };
+      if (!editingItem) {
+        payload.created_at = Timestamp.now();
+      }
 
-    if (activeTab === 'articles') endpoint = editingItem?.id ? `/api/admin/articles/${editingItem.id}` : '/api/admin/articles';
-    if (activeTab === 'directory') endpoint = editingItem?.id ? `/api/admin/directory/${editingItem.id}` : '/api/admin/directory';
-    if (activeTab === 'sitemap') endpoint = editingItem?.id ? `/api/admin/sitemap/${editingItem.id}` : '/api/admin/sitemap';
-    if (activeTab === 'api') endpoint = editingItem?.id ? `/api/admin/api-configs/${editingItem.id}` : '/api/admin/api-configs';
-    if (activeTab === 'ads') endpoint = editingItem?.id ? `/api/ads/${editingItem.id}` : '/api/ads';
+      if (editingItem?.id) {
+        await updateDoc(doc(db, collectionName, editingItem.id), payload);
+      } else {
+        await addDoc(collection(db, collectionName), payload);
+      }
 
-    const res = await fetch(endpoint, {
-      method,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data)
-    });
-
-    if (res.ok) {
       setIsModalOpen(false);
       setEditingItem(null);
-      fetchData();
       showMsg('Data berhasil disimpan', 'success');
+    } catch (err) {
+      console.error(err);
+      showMsg('Gagal menyimpan data', 'error');
     }
   };
 
@@ -704,35 +770,22 @@ const AdminDashboard = ({ user, onLogout }: { user: any, onLogout: () => void })
     const formData = new FormData(e.target as HTMLFormElement);
     const data = Object.fromEntries(formData.entries());
     
-    const res = await fetch('/api/admin/settings', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data)
-    });
-
-    if (res.ok) {
-      fetchData();
+    try {
+      const batch: any[] = [];
+      Object.entries(data).forEach(([key, value]) => {
+        batch.push(setDoc(doc(db, 'settings', key), { value }));
+      });
+      await Promise.all(batch);
       showMsg('Pengaturan berhasil diperbarui', 'success');
+    } catch (err) {
+      console.error(err);
+      showMsg('Gagal memperbarui pengaturan', 'error');
     }
   };
 
-  const handlePasswordChange = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (passwordData.new !== passwordData.confirm) {
-      showMsg('Konfirmasi password tidak cocok', 'error');
-      return;
-    }
-
-    const res = await fetch('/api/admin/change-password', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: user.username, newPassword: passwordData.new })
-    });
-
-    if (res.ok) {
-      setPasswordData({ current: '', new: '', confirm: '' });
-      showMsg('Password berhasil diubah', 'success');
-    }
+  const handleLogoutClick = async () => {
+    await signOut(auth);
+    onLogout();
   };
 
   const showMsg = (text: string, type: string) => {
@@ -1054,31 +1107,11 @@ const AdminDashboard = ({ user, onLogout }: { user: any, onLogout: () => void })
                 <h3 className="text-xl font-black">Ubah Password Admin</h3>
                 <p className="text-gray-400 text-sm mt-2">Pastikan password baru Anda kuat dan unik.</p>
               </div>
-              <form onSubmit={handlePasswordChange} className="space-y-6">
-                <div>
-                  <label className="block text-xs font-bold uppercase tracking-widest text-gray-400 mb-2">Password Baru</label>
-                  <input 
-                    type="password" 
-                    required
-                    value={passwordData.new}
-                    onChange={e => setPasswordData({...passwordData, new: e.target.value})}
-                    className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl" 
-                  />
+              <div className="space-y-6">
+                <div className="bg-gray-50 p-6 rounded-xl border border-gray-100 text-xs text-gray-500 leading-relaxed text-center">
+                  Gunakan fitur reset password di halaman login Google jika Anda ingin mengubah kata sandi. Manajemen akun saat ini dikelola melalui Firebase Authentication.
                 </div>
-                <div>
-                  <label className="block text-xs font-bold uppercase tracking-widest text-gray-400 mb-2">Konfirmasi Password Baru</label>
-                  <input 
-                    type="password" 
-                    required
-                    value={passwordData.confirm}
-                    onChange={e => setPasswordData({...passwordData, confirm: e.target.value})}
-                    className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl" 
-                  />
-                </div>
-                <button type="submit" className="w-full bg-black text-white font-bold py-4 rounded-xl hover:bg-red-600 transition-all shadow-lg shadow-black/10">
-                  Perbarui Password
-                </button>
-              </form>
+              </div>
             </div>
           )}
           
@@ -1336,21 +1369,67 @@ export default function App() {
   const [ads, setAds] = useState<Ad[]>([]);
   const [adminUser, setAdminUser] = useState<any>(null);
   const [settings, setSettings] = useState<SiteSettings | null>(null);
+  const [isAuthReady, setIsAuthReady] = useState(false);
 
   useEffect(() => {
-    fetch('/api/categories').then(res => res.json()).then(setCategories);
-    fetch('/api/articles?limit=20').then(res => res.json()).then(setArticles);
-    fetch('/api/settings').then(res => res.json()).then(setSettings);
-    fetch('/api/ads?active=true').then(res => res.json()).then(setAds);
-    
-    // Check local storage for admin session (simple)
-    const savedUser = localStorage.getItem('adminUser');
-    if (savedUser) setAdminUser(JSON.parse(savedUser));
+    // Auth Listener
+    const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        // Check if user has a profile in Firestore
+        const userDoc = await getDoc(doc(db, 'users', user.uid));
+        if (userDoc.exists()) {
+          setAdminUser({ ...userDoc.data(), uid: user.uid });
+        } else if (user.email === "minopc.wibu@gmail.com") {
+          // Auto-bootstrap first admin
+          const adminProfile = { uid: user.uid, email: user.email, role: 'admin' };
+          await setDoc(doc(db, 'users', user.uid), adminProfile);
+          setAdminUser(adminProfile);
+        }
+      } else {
+        setAdminUser(null);
+      }
+      setIsAuthReady(true);
+    });
+
+    // Firestore Listeners
+    const unsubscribeCategories = onSnapshot(collection(db, 'categories'), (snapshot) => {
+      setCategories(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Category)));
+    });
+
+    const unsubscribeArticles = onSnapshot(
+      query(collection(db, 'articles'), where('status', '==', 'published'), orderBy('created_at', 'desc'), firestoreLimit(20)),
+      (snapshot) => {
+        setArticles(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Article)));
+      }
+    );
+
+    const unsubscribeSettings = onSnapshot(collection(db, 'settings'), (snapshot) => {
+      const s: any = {};
+      snapshot.docs.forEach(doc => {
+        s[doc.id] = doc.data().value;
+      });
+      if (Object.keys(s).length > 0) setSettings(s as SiteSettings);
+    });
+
+    const unsubscribeAds = onSnapshot(
+      query(collection(db, 'ads'), where('is_active', '==', true)),
+      (snapshot) => {
+        setAds(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Ad)));
+      }
+    );
 
     // Handle /adminpanel route
     if (window.location.pathname === '/adminpanel') {
       setCurrentPage('admin-login');
     }
+
+    return () => {
+      unsubscribeAuth();
+      unsubscribeCategories();
+      unsubscribeArticles();
+      unsubscribeSettings();
+      unsubscribeAds();
+    };
   }, []);
 
   useEffect(() => {

@@ -1,0 +1,76 @@
+{
+  "entities": {
+    "Category": {
+      "title": "Category",
+      "description": "Business categories",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "slug": { "type": "string" },
+        "description": { "type": "string" }
+      },
+      "required": ["name", "slug"]
+    },
+    "Article": {
+      "title": "Article",
+      "description": "News articles",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "slug": { "type": "string" },
+        "content": { "type": "string" },
+        "summary": { "type": "string" },
+        "image_url": { "type": "string" },
+        "category_id": { "type": "string" },
+        "author": { "type": "string" },
+        "status": { "type": "string", "enum": ["published", "draft"] },
+        "created_at": { "type": "string", "format": "date-time" },
+        "updated_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "slug", "content"]
+    },
+    "Ad": {
+      "title": "Ad",
+      "description": "Advertisements",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "type": { "type": "string", "enum": ["banner", "popup", "sidebar"] },
+        "content": { "type": "string" },
+        "target_url": { "type": "string" },
+        "position": { "type": "string" },
+        "is_active": { "type": "boolean" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "type"]
+    },
+    "Setting": {
+      "title": "Setting",
+      "description": "Website settings",
+      "type": "object",
+      "properties": {
+        "key": { "type": "string" },
+        "value": { "type": "string" }
+      },
+      "required": ["key", "value"]
+    },
+    "User": {
+      "title": "User",
+      "description": "User profiles and roles",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "editor"] }
+      },
+      "required": ["uid", "email", "role"]
+    }
+  },
+  "firestore": {
+    "categories": { "schema": "Category", "description": "Collection of business categories" },
+    "articles": { "schema": "Article", "description": "Collection of news articles" },
+    "ads": { "schema": "Ad", "description": "Collection of advertisements" },
+    "settings": { "schema": "Setting", "description": "Collection of website settings" },
+    "users": { "schema": "User", "description": "Collection of user profiles" }
+  }
+}
